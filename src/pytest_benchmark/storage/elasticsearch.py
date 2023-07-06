@@ -12,6 +12,10 @@ from ..stats import normalize_stats
 try:
     import elasticsearch
     from elasticsearch.serializer import JSONSerializer
+    api_version = elasticsearch.__version__
+    NO_DOC_TYPE_ARG = False
+    if api_version[0] > 7:
+        NO_DOC_TYPE_ARG = True
 except ImportError:
     raise ImportError("Please install elasticsearch or pytest-benchmark[elasticsearch]")
 
@@ -69,7 +73,7 @@ class ElasticsearchStorage(object):
                 }
             }
         }
-        result = self._es.search(index=self._es_index, doc_type=self._es_doctype, body=body)
+        result = self._search_call(body=body)
         return sorted([record["key"] for record in result["aggregations"]["benchmark_ids"]["buckets"]])
 
     def load(self, id_prefix=None):
@@ -112,7 +116,9 @@ class ElasticsearchStorage(object):
                 }
             }
 
-        return self._es.search(index=self._es_index, doc_type=self._es_doctype, body=body)
+        result = self._search_call(body=body)
+
+        return result
 
     @staticmethod
     def _benchmark_from_es_record(source_es_record):
@@ -165,9 +171,7 @@ class ElasticsearchStorage(object):
                 benchmark_id = self.default_machine_id + "_" + benchmark_id
             doc_id = benchmark_id + "_" + bench["fullname"]
             bench["benchmark_id"] = benchmark_id
-            self._es.index(
-                index=self._es_index,
-                doc_type=self._es_doctype,
+            self._index_call(
                 body=bench,
                 id=doc_id,
             )
@@ -175,6 +179,19 @@ class ElasticsearchStorage(object):
         masked_hosts = _mask_hosts(self._es_hosts)
         self.logger.info("Saved benchmark data to %s to index %s as doctype %s" % (
             masked_hosts, self._es_index, self._es_doctype))
+    
+    if NO_DOC_TYPE_ARG:
+        def _index_call(self, body, id):
+            return self._es.index(index=self._es_index, body=body, id=id)
+
+        def _search_call(self, body):
+            return self._es.search(index=self._es_index, body=body)
+    else:
+        def _index_call(self, body, id):
+            return self._es.index(index=self._es_index, doc_type=self._es_doctype, body=body, id=id)
+
+        def _search_call(self, body):
+            return self._es.search(index=self._es_index, doc_type=self._es_doctype, body=body)
 
     def _create_index(self):
         mapping = {
